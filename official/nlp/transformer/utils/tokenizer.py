@@ -367,11 +367,16 @@ def _count_tokens(files, file_byte_limit=1e6, correct_strip=True,
       file_byte_budget = file_byte_limit
       counter = 0
       lines_to_skip = int(reader.size() / (file_byte_budget * 2))
-      for line in reader:
+      for i,line in enumerate(reader):
+        if i%100==0:
+          tf.compat.v1.logging.debug("Counting tokens, byte budget left for '%s:%d': %d" %
+                                     (filepath, i, file_byte_budget))
+
         if counter < lines_to_skip:
           counter += 1
         else:
           if file_byte_budget < 0:
+            tf.compat.v1.logging.debug("Byte budget of '%s' is over" % (filepath,))
             break
           if correct_strip:
             line = native_to_unicode(line)
