@@ -65,7 +65,7 @@ class Subtokenizer(object):
   """Encodes and decodes strings to/from integer IDs."""
 
   def __init__(self, vocab_file, reserved_tokens=None,
-               master_char_set=None):
+               master_char_set=None, no_slave_multichar=False):
     """Initializes class, creating a vocab file if data_files is provided."""
     tf.compat.v1.logging.info("Initializing Subtokenizer from file %s." %
                               vocab_file)
@@ -88,12 +88,13 @@ class Subtokenizer(object):
     self._cache_size = 2 ** 20
     self._cache = [(None, None)] * self._cache_size
     self._master_char_set = master_char_set
+    self._no_slave_multichar = no_slave_multichar
 
   @staticmethod
   def init_from_files(
       vocab_file, files, target_vocab_size, threshold, min_count=None,
       file_byte_limit=1e6, reserved_tokens=None, correct_strip=True,
-      master_char_set=None):
+      master_char_set=None, no_slave_multichar=False):
     """Create subtoken vocabulary based on files, and save vocab to file.
 
     Args:
@@ -123,7 +124,8 @@ class Subtokenizer(object):
       tf.compat.v1.logging.info("Vocab file already exists (%s)" % vocab_file)
     else:
       tf.compat.v1.logging.info("Begin steps to create subtoken vocabulary...")
-      token_counts = _count_tokens(files, file_byte_limit, correct_strip, master_char_set)
+      token_counts = _count_tokens(files, file_byte_limit, correct_strip,
+                                   master_char_set, no_slave_multichar)
       alphabet = _generate_alphabet_dict(token_counts)
       subtoken_list = _generate_subtokens_with_target_vocab_size(
           token_counts, alphabet, target_vocab_size, threshold, min_count,
@@ -131,12 +133,15 @@ class Subtokenizer(object):
       tf.compat.v1.logging.info("Generated vocabulary with %d subtokens." %
                                 len(subtoken_list))
       _save_vocab_file(vocab_file, subtoken_list)
-    return Subtokenizer(vocab_file, master_char_set=master_char_set)
+    return Subtokenizer(vocab_file, master_char_set=master_char_set,
+                                    no_slave_multichar=no_slave_multichar)
 
   def encode(self, raw_string, add_eos=False):
     """Encodes a string into a list of int subtoken ids."""
     ret = []
-    tokens = _split_string_to_tokens(native_to_unicode(raw_string),self._master_char_set)
+    tokens = _split_string_to_tokens(native_to_unicode(raw_string),
+                                     self._master_char_set,
+                                     self._no_slave_multichar)
     for token in tokens:
       ret.extend(self._token_to_subtoken_ids(token))
     if add_eos:
@@ -232,7 +237,7 @@ def _unicode_to_native(s):
     return s
 
 
-def _split_string_to_tokens(text, master_char_set):
+def _split_string_to_tokens(text, master_char_set, no_slave_multichar):
   """Splits text to a list of string tokens."""
   if not text:
     return []
@@ -241,7 +246,13 @@ def _split_string_to_tokens(text, master_char_set):
   # Classify each character in the input string
   is_master = [c in master_char_set for c in text]
   for pos in xrange(1, len(text)):
-    if is_master[pos] != is_master[pos - 1]:
+    if is_master[pos] or (not no_slave_multichar):
+      if is_master[pos] != is_master[pos - 1]:
+        token = text[token_start:pos]
+        if token != u" " or token_start == 0:
+          ret.append(token)
+        token_start = pos
+    else:
       token = text[token_start:pos]
       if token != u" " or token_start == 0:
         ret.append(token)
@@ -339,7 +350,7 @@ def _unescape_token(token):
 
 
 def _count_tokens(files, file_byte_limit=1e6, correct_strip=True,
-                  master_char_set=None):
+                  master_char_set=None, no_slave_multichar=False):
   """Return token counts of words in the files.
 
   Samples file_byte_limit bytes from each file, and counts the words that appear
@@ -386,7 +397,8 @@ def _count_tokens(files, file_byte_limit=1e6, correct_strip=True,
 
           # Add words to token counts
           for token in _split_string_to_tokens(native_to_unicode(line),
-                                               master_char_set):
+                                               master_char_set,
+                                               no_slave_multichar):
             token_counts[token] += 1
   return token_counts
 
