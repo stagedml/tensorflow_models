@@ -95,7 +95,9 @@ def run_customized_training_loop(
     init_checkpoint=None,
     custom_callbacks=None,
     run_eagerly=False,
-    sub_model_export_name=None):
+    sub_model_export_name=None,
+    checkpoint_name_template='ctl_step_{step}.ckpt'
+    ):
   """Run BERT pretrain model training using low-level API.
 
   Arguments:
@@ -137,6 +139,9 @@ def run_customized_training_loop(
         file is {sub_model_export_name}_step_{step}.ckpt and the last
         checkpint's name is {sub_model_export_name}.ckpt;
         if None, `sub_model` will not be exported as checkpoint.
+      checkpoint_name_template: Template of the checkpoint name. If this string
+        contains `{step}` substring, the function will replace it with current
+        iteration step number. If None, no checkpoints are saved.
 
   Returns:
       Trained model.
@@ -337,20 +342,21 @@ def run_customized_training_loop(
         callback.on_batch_end(batch)
 
     # Training loop starts here.
-    checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
+    checkpoint = tf.train.Checkpoint(
+        model=model, optimizer=optimizer) if checkpoint_name_template else None
     sub_model_checkpoint = tf.train.Checkpoint(
         model=sub_model) if sub_model_export_name else None
 
-    latest_checkpoint_file = tf.train.latest_checkpoint(model_dir)
-    if latest_checkpoint_file:
-      logging.info(
-          'Checkpoint file %s found and restoring from '
-          'checkpoint', latest_checkpoint_file)
-      checkpoint.restore(latest_checkpoint_file)
-      logging.info('Loading from checkpoint file completed')
+    if checkpoint:
+      latest_checkpoint_file = tf.train.latest_checkpoint(model_dir)
+      if latest_checkpoint_file:
+        logging.info(
+            'Checkpoint file %s found and restoring from '
+            'checkpoint', latest_checkpoint_file)
+        checkpoint.restore(latest_checkpoint_file)
+        logging.info('Loading from checkpoint file completed')
 
     current_step = optimizer.iterations.numpy()
-    checkpoint_name = 'ctl_step_{step}.ckpt'
 
     while current_step < total_training_steps:
       # Training loss/metric are taking average over steps inside micro
@@ -395,8 +401,9 @@ def run_customized_training_loop(
         # To avoid repeated model saving, we do not save after the last
         # step of training.
         if current_step < total_training_steps:
-          _save_checkpoint(checkpoint, model_dir,
-                           checkpoint_name.format(step=current_step))
+          if checkpoint_name_template:
+            _save_checkpoint(checkpoint, model_dir,
+                             checkpoint_name_template.format(step=current_step))
           if sub_model_export_name:
             _save_checkpoint(
                 sub_model_checkpoint, model_dir,
@@ -409,8 +416,9 @@ def run_customized_training_loop(
           for metric in eval_metrics + model.metrics:
             metric.reset_states()
 
-    _save_checkpoint(checkpoint, model_dir,
-                     checkpoint_name.format(step=current_step))
+    if checkpoint_name_template:
+      _save_checkpoint(checkpoint, model_dir,
+                       checkpoint_name_template.format(step=current_step))
     if sub_model_export_name:
       _save_checkpoint(sub_model_checkpoint, model_dir,
                        '%s.ckpt' % sub_model_export_name)
