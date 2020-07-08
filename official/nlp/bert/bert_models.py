@@ -30,6 +30,16 @@ from official.nlp.modeling.networks import bert_classifier
 from official.nlp.modeling.networks import bert_pretrainer
 from official.nlp.modeling.networks import bert_span_labeler
 
+from official.nlp.transformer.metrics import padded_cross_entropy_loss
+
+from functools import partial
+
+def padded_neg_log_perplexity(logits, labels, vocab_size):
+  """Average log-perplexity excluding padding 0s. No smoothing."""
+  num, den = padded_cross_entropy_loss(logits, labels, 0, vocab_size)
+  return -num, den
+
+
 
 class BertPretrainLossAndMetricLayer(tf.keras.layers.Layer):
   """Returns layer that computes custom loss and metrics for pretraining."""
@@ -64,6 +74,13 @@ class BertPretrainLossAndMetricLayer(tf.keras.layers.Layer):
 
     self.add_metric(
         next_sentence_loss, name='next_sentence_loss', aggregation='mean')
+
+    self.add_metric(
+      padded_neg_log_perplexity(
+        vocab_size=self._vocab_size, logits=lm_output, labels=lm_labels),
+      name='neg_log_perplexity',
+      aggregation='mean')
+
 
   def call(self, lm_output, sentence_output, lm_label_ids, lm_label_weights,
            sentence_labels):
